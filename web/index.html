@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C++ Parser · AST Viewer</title>
+<style>
+:root {
+    --bg: #16161e;
+    --panel: #1a1b26;
+    --panel-2: #20212e;
+    --border: #2a2c3d;
+    --text: #c0caf5;
+    --muted: #7f849c;
+    --accent: #7aa2f7;
+    --ok: #9ece6a;
+    --bad: #f7768e;
+    --warn: #e0af68;
+    --mono: "JetBrains Mono", "Fira Code", ui-monospace, "DejaVu Sans Mono", monospace;
+    --sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --line: 20px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); }
+body { display: flex; flex-direction: column; }
+header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel);
+}
+header h1 { font-size: 15px; margin: 0 8px 0 0; font-weight: 600; letter-spacing: .2px; }
+header h1 span { color: var(--muted); font-weight: 400; }
+button, select, .file {
+    font: 13px var(--sans); color: var(--text); background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover, select:hover, .file:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #11121a; border-color: var(--accent); font-weight: 600; }
+.file input { display: none; }
+#status { font-size: 12px; color: var(--muted); margin-left: auto; }
+#status.ok { color: var(--ok); }
+#status.bad { color: var(--bad); }
+main { flex: 1; display: grid; grid-template-columns: minmax(320px, 38%) 1fr; min-height: 0; }
+section { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+#left { border-right: 1px solid var(--border); }
+.editor { flex: 1; display: flex; min-height: 0; background: var(--panel); position: relative; }
+.gutter {
+    width: 48px; padding: 10px 8px 10px 0; text-align: right; color: var(--muted);
+    font: 13px/var(--line) var(--mono); overflow: hidden; user-select: none; background: var(--panel);
+    border-right: 1px solid var(--border);
+}
+.gutter div { height: var(--line); }
+.gutter div.error { color: var(--bad); font-weight: 700; }
+.code-wrap { position: relative; flex: 1; min-width: 0; }
+.line-highlight {
+    position: absolute; left: 0; right: 0; height: var(--line); background: rgba(122, 162, 247, .16);
+    border-left: 3px solid var(--accent); display: none; pointer-events: none;
+}
+textarea {
+    position: absolute; inset: 0; width: 100%; height: 100%; resize: none; border: 0; outline: none;
+    background: transparent; color: var(--text); font: 13px/var(--line) var(--mono);
+    padding: 10px 12px; white-space: pre; overflow: auto; tab-size: 4;
+}
+#diagnostics { max-height: 32%; overflow: auto; border-top: 1px solid var(--border); font-size: 12px; }
+#diagnostics .item { padding: 6px 12px; border-bottom: 1px solid var(--border); cursor: pointer; font-family: var(--mono); }
+#diagnostics .item:hover { background: var(--panel-2); }
+#diagnostics .stage { display: inline-block; min-width: 72px; color: var(--bad); }
+#diagnostics .stage.runtime { color: var(--warn); }
+#diagnostics .ok { padding: 8px 12px; color: var(--ok); }
+.tabs { display: flex; gap: 2px; padding: 8px 12px 0; background: var(--panel); border-bottom: 1px solid var(--border); }
+.tabs button { border-radius: 6px 6px 0 0; border-bottom: 0; background: transparent; }
+.tabs button.active { background: var(--bg); border-color: var(--border); color: var(--accent); }
+.tab { display: none; flex: 1; min-height: 0; flex-direction: column; }
+.tab.active { display: flex; }
+.toolbar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px;
+    border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted);
+}
+.legend { display: flex; gap: 12px; margin-left: auto; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+#tree { flex: 1; width: 100%; min-height: 0; background: var(--bg); cursor: grab; }
+#tree:active { cursor: grabbing; }
+#nodeInfo {
+    position: absolute; right: 16px; bottom: 16px; max-width: 360px; padding: 10px 12px; font: 12px/1.5 var(--mono);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; display: none;
+}
+#nodeInfo b { color: var(--accent); font-weight: 600; }
+.tree-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
+pre.code {
+    flex: 1; margin: 0; padding: 12px 16px; overflow: auto; font: 13px/1.55 var(--mono); background: var(--bg);
+}
+.kw { color: #bb9af7; }
+.str { color: #9ece6a; }
+.num { color: #ff9e64; }
+.fn { color: #7aa2f7; }
+.outputs { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+.outputs > div { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
+.outputs h3 { margin: 0; padding: 8px 16px; font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border); }
+#match.ok { color: var(--ok); }
+#match.bad { color: var(--bad); }
+.empty-state { padding: 24px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.empty-state code { background: var(--panel-2); padding: 2px 6px; border-radius: 4px; font-family: var(--mono); }
+@media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 45% 55%; }
+    #left { border-right: 0; border-bottom: 1px solid var(--border); }
+    .outputs { grid-template-columns: 1fr; }
+}
+</style>
+<script src="vendor/d3.min.js"></script>
+</head>
+<body>
+<header>
+    <h1>C++ → AST → JS <span>· lex/yacc parser</span></h1>
+    <select id="examples" title="Examples"><option value="">— examples —</option></select>
+    <button id="parse" class="primary" title="Ctrl+Enter">Parse &amp; Run ▶</button>
+    <label class="file">Open JSON<input type="file" id="jsonFile" accept=".json,application/json"></label>
+    <span id="status">connecting…</span>
+</header>
+<main>
+    <section id="left">
+        <div class="editor">
+            <div class="gutter" id="gutter"></div>
+            <div class="code-wrap">
+                <div class="line-highlight" id="lineHighlight"></div>
+                <textarea id="source" spellcheck="false" wrap="off"></textarea>
+            </div>
+        </div>
+        <div id="diagnostics"></div>
+    </section>
+    <section id="right">
+        <nav class="tabs">
+            <button data-tab="ast" class="active">AST</button>
+            <button data-tab="js">JavaScript</button>
+            <button data-tab="out">Output</button>
+        </nav>
+        <div class="tab active" id="tab-ast">
+            <div class="toolbar">
+                <button id="expandAll">Expand all</button>
+                <button id="collapseAll">Collapse</button>
+                <button id="fit">Fit</button>
+                <button id="exportSvg">Export SVG</button>
+                <span id="nodeCount"></span>
+                <div class="legend">
+                    <span><i style="background:#7aa2f7"></i>declarations</span>
+                    <span><i style="background:#e0af68"></i>statements</span>
+                    <span><i style="background:#9ece6a"></i>expressions</span>
+                    <span><i style="background:#bb9af7"></i>leaves</span>
+                </div>
+            </div>
+            <div class="tree-wrap">
+                <svg id="tree"></svg>
+                <div id="nodeInfo"></div>
+            </div>
+        </div>
+        <div class="tab" id="tab-js">
+            <pre class="code" id="jsCode"></pre>
+        </div>
+        <div class="tab" id="tab-out">
+            <div class="toolbar">
+                <button id="runJs">Run generated JS in browser</button>
+                <span id="match"></span>
+            </div>
+            <div class="outputs">
+                <div><h3>C++ interpreter (tree-walking over AST)</h3><pre class="code" id="interpOut"></pre></div>
+                <div><h3>Generated JavaScript (executed by the browser)</h3><pre class="code" id="jsOut"></pre></div>
+            </div>
+        </div>
+    </section>
+</main>
+<script>
+const COLORS = { decl: "#7aa2f7", stmt: "#e0af68", expr: "#9ece6a", leaf: "#bb9af7", empty: "#565f89" };
+const KINDS = {
+    decl: ["Program", "Using", "FuncDef", "FuncDecl", "Params", "Param", "DeclStmt", "VarDecl", "InitList"],
+    stmt: ["Block", "ExprStmt", "If", "While", "DoWhile", "For", "RangeFor", "Return", "Break", "Continue"],
+    expr: ["Assign", "Binary", "Unary", "Postfix", "Ternary", "Call", "Index", "Cast", "Comma"],
+    leaf: ["Ident", "IntLit", "FloatLit", "CharLit", "BoolLit", "StringLit"]
+};
+const LINE = 20;
+const PAD = 10;
+const ROW = 78;
+
+const $ = (id) => document.getElementById(id);
+const state = { server: false, result: null, root: null, nextId: 0, selected: null };
+
+function category(kind) {
+    for (const [name, list] of Object.entries(KINDS)) if (list.includes(kind)) return name;
+    return "empty";
+}
+
+function escapeHtml(text) {
+    return text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function setStatus(text, kind) {
+    $("status").textContent = text;
+    $("status").className = kind || "";
+}
+
+function renderGutter() {
+    const lines = $("source").value.split("\n").length;
+    const errorLines = new Set((state.result?.diagnostics || []).map((d) => d.line));
+    if (state.result?.runtimeError) errorLines.add(state.result.runtimeError.line);
+    let html = "";
+    for (let i = 1; i <= lines; i++) html += `<div class="${errorLines.has(i) ? "error" : ""}">${i}</div>`;
+    $("gutter").innerHTML = html;
+    syncScroll();
+}
+
+function syncScroll() {
+    const source = $("source");
+    $("gutter").scrollTop = source.scrollTop;
+    const highlight = $("lineHighlight");
+    if (highlight.dataset.line) {
+        highlight.style.top = `${PAD + (Number(highlight.dataset.line) - 1) * LINE - source.scrollTop}px`;
+    }
+}
+
+function highlightLine(line) {
+    const highlight = $("lineHighlight");
+    if (!line || line < 1) {
+        highlight.style.display = "none";
+        delete highlight.dataset.line;
+        return;
+    }
+    highlight.dataset.line = line;
+    highlight.style.display = "block";
+    const source = $("source");
+    const top = PAD + (line - 1) * LINE;
+    if (top < source.scrollTop || top > source.scrollTop + source.clientHeight - LINE * 2) {
+        source.scrollTop = Math.max(0, top - source.clientHeight / 3);
+    }
+    syncScroll();
+}
+
+function highlightJs(code) {
+    const pattern = /("(?:\\.|[^"\\])*")|\b(function|let|const|return|if|else|for|while|do|break|continue|typeof|new)\b|\b(\d+(?:\.\d+)?(?:e[+-]?\d+)?|0x[0-9a-fA-F]+)\b|\b(__\w+|Math\.\w+)\b/g;
+    let out = "";
+    let last = 0;
+    for (const m of code.matchAll(pattern)) {
+        out += escapeHtml(code.slice(last, m.index));
+        const cls = m[1] ? "str" : m[2] ? "kw" : m[3] ? "num" : "fn";
+        out += `<span class="${cls}">${escapeHtml(m[0])}</span>`;
+        last = m.index + m[0].length;
+    }
+    return out + escapeHtml(code.slice(last));
+}
+
+function renderDiagnostics(result) {
+    const box = $("diagnostics");
+    const items = [...(result.diagnostics || [])];
+    if (result.runtimeError) items.push({ stage: "runtime", line: result.runtimeError.line, col: 0, message: result.runtimeError.message });
+    if (!items.length) {
+        box.innerHTML = `<div class="ok">✔ no errors · lexical, syntax and semantic analysis passed${result.ran ? ` · exit code ${result.exitCode}` : ""}</div>`;
+        return;
+    }
+    box.innerHTML = items.map((d) =>
+        `<div class="item" data-line="${d.line}"><span class="stage ${d.stage}">${escapeHtml(d.stage)}</span>` +
+        `${d.line}:${d.col} &nbsp;${escapeHtml(d.message)}</div>`).join("");
+    box.querySelectorAll(".item").forEach((el) => el.addEventListener("click", () => highlightLine(Number(el.dataset.line))));
+}
+
+function render(result) {
+    state.result = result;
+    state.selected = null;
+    $("nodeInfo").style.display = "none";
+    highlightLine(0);
+    renderDiagnostics(result);
+    renderGutter();
+    $("jsCode").innerHTML = result.js ? highlightJs(result.js) : `<div class="empty-state">No JavaScript: the program has ${result.stage} errors.</div>`;
+    $("interpOut").textContent = result.ran || result.runtimeError
+        ? result.output + (result.runtimeError ? `\n[runtime error, line ${result.runtimeError.line}] ${result.runtimeError.message}` : `\n[exit code ${result.exitCode}]`)
+        : "The program was not executed.";
+    $("jsOut").textContent = "";
+    $("match").textContent = "";
+    if (result.ast) drawTree(result.ast);
+    else clearTree("No AST: parsing failed.");
+    const errors = (result.diagnostics || []).length;
+    if (errors) setStatus(`${errors} error(s) · stage: ${result.stage}`, "bad");
+    else if (result.runtimeError) setStatus("runtime error", "bad");
+    else setStatus("ok", "ok");
+}
+
+const svg = d3.select("#tree");
+const viewport = svg.append("g");
+const linkLayer = viewport.append("g");
+const nodeLayer = viewport.append("g");
+const zoom = d3.zoom().scaleExtent([0.08, 3]).on("zoom", (event) => viewport.attr("transform", event.transform));
+svg.call(zoom).on("dblclick.zoom", null);
+
+function labelWidth(d) {
+    return Math.max(44, d.data.label.length * 7.1 + 22);
+}
+
+function clearTree(message) {
+    state.root = null;
+    linkLayer.selectAll("*").remove();
+    nodeLayer.selectAll("*").remove();
+    $("nodeCount").textContent = message || "";
+}
+
+function drawTree(ast) {
+    linkLayer.selectAll("*").remove();
+    nodeLayer.selectAll("*").remove();
+    state.nextId = 0;
+    state.root = d3.hierarchy(ast);
+    const total = state.root.descendants().length;
+    state.root.descendants().forEach((d) => {
+        d.id = ++state.nextId;
+        if (total > 350 && d.depth >= 4 && d.children) {
+            d._children = d.children;
+            d.children = null;
+        }
+    });
+    $("nodeCount").textContent = `${total} nodes`;
+    update(state.root);
+    fit(false);
+}
+
+function hiddenCount(d) {
+    let count = 0;
+    (d._children || []).forEach((c) => { count += 1 + hiddenCount({ _children: c.children || c._children }); });
+    return count;
+}
+
+function linkPath(s, t) {
+    const my = (s.y + t.y) / 2;
+    return `M${s.x},${s.y + 13}C${s.x},${my} ${t.x},${my} ${t.x},${t.y - 13}`;
+}
+
+function update(source) {
+    d3.tree().nodeSize([1, ROW]).separation((a, b) => (labelWidth(a) + labelWidth(b)) / 2 + (a.parent === b.parent ? 16 : 34))(state.root);
+    const nodes = state.root.descendants();
+    const links = state.root.links();
+    const duration = 280;
+    const origin = { x: source.x0 ?? source.x, y: source.y0 ?? source.y };
+
+    const link = linkLayer.selectAll("g.link").data(links, (d) => d.target.id);
+    const linkEnter = link.enter().append("g").attr("class", "link");
+    linkEnter.append("path").attr("fill", "none").attr("stroke", "#3b3f5c").attr("stroke-width", 1.4)
+        .attr("d", linkPath(origin, origin));
+    linkEnter.append("text").attr("font-family", "ui-monospace, monospace").attr("font-size", 10)
+        .attr("fill", "#7f849c").attr("text-anchor", "middle").attr("opacity", 0)
+        .text((d) => d.target.data.role || "");
+    const linkMerged = linkEnter.merge(link);
+    linkMerged.select("path").transition().duration(duration).attr("d", (d) => linkPath(d.source, d.target));
+    linkMerged.select("text").transition().duration(duration).attr("opacity", 1)
+        .attr("x", (d) => (d.source.x + d.target.x) / 2 + 4)
+        .attr("y", (d) => (d.source.y + d.target.y) / 2 + 4);
+    link.exit().transition().duration(duration).attr("opacity", 0).remove();
+
+    const node = nodeLayer.selectAll("g.node").data(nodes, (d) => d.id);
+    const enter = node.enter().append("g").attr("class", "node")
+        .attr("transform", `translate(${origin.x},${origin.y})`).attr("opacity", 0).style("cursor", "pointer")
+        .on("click", (event, d) => {
+            if (d.children || d._children) {
+                [d.children, d._children] = [d._children, d.children];
+                update(d);
+            }
+            selectNode(d);
+        });
+    enter.append("rect").attr("rx", 7).attr("height", 26).attr("y", -13)
+        .attr("x", (d) => -labelWidth(d) / 2).attr("width", labelWidth)
+        .attr("fill", (d) => COLORS[category(d.data.kind)]).attr("fill-opacity", 0.14)
+        .attr("stroke", (d) => COLORS[category(d.data.kind)]).attr("stroke-width", 1.4);
+    enter.append("text").attr("class", "label").attr("text-anchor", "middle").attr("dy", "0.35em")
+        .attr("fill", "#e1e6ff").attr("font-family", "ui-monospace, 'DejaVu Sans Mono', monospace").attr("font-size", 12)
+        .text((d) => d.data.label);
+    enter.append("text").attr("class", "type").attr("text-anchor", "middle").attr("y", 26)
+        .attr("fill", "#8c92b3").attr("font-family", "ui-monospace, monospace").attr("font-size", 10)
+        .text((d) => d.data.type ? `‹${d.data.type}›` : "");
+    enter.append("text").attr("class", "badge").attr("text-anchor", "start").attr("dy", "0.35em")
+        .attr("x", (d) => labelWidth(d) / 2 + 6).attr("fill", "#e0af68").attr("font-family", "ui-monospace, monospace").attr("font-size", 11);
+
+    const merged = enter.merge(node);
+    merged.transition().duration(duration).attr("transform", (d) => `translate(${d.x},${d.y})`).attr("opacity", 1);
+    merged.select("rect").attr("stroke-dasharray", (d) => d._children ? "4 3" : null)
+        .attr("stroke-width", (d) => d === state.selected ? 3 : 1.4);
+    merged.select("text.badge").text((d) => d._children ? `+${hiddenCount(d)}` : "");
+    node.exit().transition().duration(duration).attr("opacity", 0).remove();
+
+    nodes.forEach((d) => { d.x0 = d.x; d.y0 = d.y; });
+}
+
+function selectNode(d) {
+    state.selected = d;
+    nodeLayer.selectAll("g.node rect").attr("stroke-width", (n) => n === d ? 3 : 1.4);
+    highlightLine(d.data.line);
+    const info = $("nodeInfo");
+    const data = d.data;
+    info.innerHTML = [
+        `<b>${escapeHtml(data.label)}</b>`,
+        `kind: ${data.kind} · category: ${category(data.kind)}`,
+        data.role ? `role in parent: ${escapeHtml(data.role)}` : "",
+        data.type ? `semantic type: ${escapeHtml(data.type)}` : "",
+        data.line ? `source: line ${data.line}, column ${data.col}` : "",
+        `children: ${(d.children || d._children || []).length}${d._children ? " (collapsed)" : ""} · depth ${d.depth}`
+    ].filter(Boolean).join("<br>");
+    info.style.display = "block";
+}
+
+function fit(animate = true) {
+    if (!state.root) return;
+    const box = viewport.node().getBBox();
+    const width = svg.node().clientWidth;
+    const height = svg.node().clientHeight;
+    if (!box.width || !width) return;
+    const nodes = state.root.descendants();
+    const minX = d3.min(nodes, (d) => d.x - labelWidth(d) / 2) - 20;
+    const maxX = d3.max(nodes, (d) => d.x + labelWidth(d) / 2) + 60;
+    const minY = d3.min(nodes, (d) => d.y) - 30;
+    const maxY = d3.max(nodes, (d) => d.y) + 40;
+    const fitScale = 0.95 * Math.min(width / (maxX - minX), height / (maxY - minY));
+    const scale = Math.min(1.1, Math.max(fitScale, 0.6));
+    const centerX = fitScale >= 0.6 ? (minX + maxX) / 2 : state.root.x;
+    const transform = d3.zoomIdentity
+        .translate(width / 2 - scale * centerX, 24 - scale * minY)
+        .scale(scale);
+    (animate ? svg.transition().duration(400) : svg).call(zoom.transform, transform);
+}
+
+function setAll(expand) {
+    if (!state.root) return;
+    const visit = (d) => {
+        if (expand && d._children) {
+            d.children = d._children;
+            d._children = null;
+        }
+        (d.children || d._children || []).forEach(visit);
+        if (!expand && d.depth >= 1 && d.children) {
+            d._children = d.children;
+            d.children = null;
+        }
+    };
+    visit(state.root);
+    update(state.root);
+    fit();
+}
+
+function exportSvg() {
+    if (!state.root) return;
+    const box = viewport.node().getBBox();
+    const clone = viewport.node().cloneNode(true);
+    clone.removeAttribute("transform");
+    const ns = "http://www.w3.org/2000/svg";
+    const out = document.createElementNS(ns, "svg");
+    out.setAttribute("xmlns", ns);
+    const margin = 20;
+    out.setAttribute("viewBox", `${box.x - margin} ${box.y - margin} ${box.width + 2 * margin} ${box.height + 2 * margin}`);
+    out.setAttribute("width", box.width + 2 * margin);
+    out.setAttribute("height", box.height + 2 * margin);
+    const background = document.createElementNS(ns, "rect");
+    background.setAttribute("x", box.x - margin);
+    background.setAttribute("y", box.y - margin);
+    background.setAttribute("width", box.width + 2 * margin);
+    background.setAttribute("height", box.height + 2 * margin);
+    background.setAttribute("fill", "#16161e");
+    out.appendChild(background);
+    out.appendChild(clone);
+    const blob = new Blob([new XMLSerializer().serializeToString(out)], { type: "image/svg+xml" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "ast.svg";
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+function runJs() {
+    const result = state.result;
+    if (!result || !result.js) {
+        $("jsOut").textContent = "Nothing to run.";
+        return;
+    }
+    let buffer = "";
+    let exitCode;
+    globalThis.__sink = (text) => { buffer += text; };
+    try {
+        exitCode = new Function(result.js + "\nreturn __exit_code;")();
+        buffer += `\n[exit code ${exitCode}]`;
+    } catch (error) {
+        buffer += `\n[JavaScript error] ${error.message}`;
+    } finally {
+        delete globalThis.__sink;
+    }
+    $("jsOut").textContent = buffer;
+    if (result.ran) {
+        const same = buffer === $("interpOut").textContent;
+        $("match").textContent = same ? "✔ interpreter and generated JS produce identical output" : "✘ outputs differ";
+        $("match").className = same ? "ok" : "bad";
+    }
+}
+
+async function parseSource() {
+    if (!state.server) {
+        setStatus("server is offline — start it with: python3 web/server.py", "bad");
+        return;
+    }
+    setStatus("parsing…");
+    try {
+        const response = await fetch("/api/parse", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: $("source").value })
+        });
+        render(await response.json());
+    } catch (error) {
+        setStatus(`request failed: ${error.message}`, "bad");
+    }
+}
+
+async function init() {
+    document.querySelectorAll(".tabs button").forEach((button) => button.addEventListener("click", () => {
+        document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b === button));
+        document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.id === `tab-${button.dataset.tab}`));
+        if (button.dataset.tab === "ast") fit(false);
+    }));
+    $("source").addEventListener("scroll", syncScroll);
+    $("source").addEventListener("input", renderGutter);
+    $("source").addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault();
+            parseSource();
+        } else if (event.key === "Tab") {
+            event.preventDefault();
+            const t = event.target;
+            const start = t.selectionStart;
+            t.value = t.value.slice(0, start) + "    " + t.value.slice(t.selectionEnd);
+            t.selectionStart = t.selectionEnd = start + 4;
+            renderGutter();
+        }
+    });
+    $("parse").addEventListener("click", parseSource);
+    $("expandAll").addEventListener("click", () => setAll(true));
+    $("collapseAll").addEventListener("click", () => setAll(false));
+    $("fit").addEventListener("click", () => fit());
+    $("exportSvg").addEventListener("click", exportSvg);
+    $("runJs").addEventListener("click", runJs);
+    $("jsonFile").addEventListener("change", async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        try {
+            const result = JSON.parse(await file.text());
+            if (typeof result.source === "string") $("source").value = result.source;
+            render(result);
+            setStatus(`loaded ${file.name}`, "ok");
+        } catch (error) {
+            setStatus(`invalid JSON: ${error.message}`, "bad");
+        }
+    });
+    window.addEventListener("resize", () => fit(false));
+
+    try {
+        const response = await fetch("/api/examples");
+        if (!response.ok) throw new Error(response.statusText);
+        const examples = await response.json();
+        state.server = true;
+        const select = $("examples");
+        examples.forEach((example, index) => {
+            const option = document.createElement("option");
+            option.value = index;
+            option.textContent = example.name;
+            select.appendChild(option);
+        });
+        select.addEventListener("change", () => {
+            if (select.value === "") return;
+            $("source").value = examples[Number(select.value)].code;
+            renderGutter();
+            parseSource();
+        });
+        setStatus("server connected", "ok");
+        if (examples.length) {
+            select.value = "0";
+            $("source").value = examples[0].code;
+            renderGutter();
+            parseSource();
+        }
+    } catch (error) {
+        setStatus("offline mode: open a JSON produced by  ./build/cparser file.cpp --json out.json --run", "bad");
+        $("examples").disabled = true;
+        $("source").value = "// Offline mode.\n// Start the server:  python3 web/server.py\n// or open a JSON file created by:\n//   ./build/cparser examples/01_factorial.cpp --json ast.json --run\n";
+        renderGutter();
+    }
+}
+
+init();
+</script>
+</body>
+</html>
